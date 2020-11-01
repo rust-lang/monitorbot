@@ -1,7 +1,7 @@
 use prometheus::{core::Collector, IntGauge, Opts};
 
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
-use reqwest::Method;
+use reqwest::{Client, Method, Request};
 use std::collections::HashMap;
 use tokio::time::Duration;
 
@@ -14,8 +14,29 @@ struct User {
     reset: IntGauge,
 }
 
+const GH_API_USER_ENDPOINT: &str = "https://api.github.com/user";
+const GH_API_RATE_LIMIT_ENDPOINT: &str = "https://api.github.com/rate_limit";
 const GH_API_TOKENS_ENV_KEY: &str = "GITHUB_API_TOKENS";
 const DATA_CACHE_UPDATE_SECONDS: u64 = 120;
+
+enum GithubReqBuilder {
+    User,
+    RateLimit,
+}
+
+impl GithubReqBuilder {
+    pub fn build_request(&self, client: &Client, token: &str) -> Result<Request, reqwest::Error> {
+        let rb = match self {
+            Self::User => client.request(Method::GET, GH_API_USER_ENDPOINT),
+            Self::RateLimit => client.request(Method::GET, GH_API_RATE_LIMIT_ENDPOINT),
+        };
+
+        rb.header(USER_AGENT, "monitorbot-rust-lang")
+            .header(AUTHORIZATION, format!("{} {}", "token", token))
+            .header(ACCEPT, "application/vnd.github.v3+json")
+            .build()
+    }
+}
 
 #[derive(Clone)]
 pub struct GitHubRateLimit {
@@ -104,14 +125,9 @@ impl GitHubRateLimit {
         }
 
         let client = reqwest::Client::new();
-        let req = client
-            .request(Method::GET, "https://api.github.com/user")
-            .header(USER_AGENT, "monitorbot-rust-lang")
-            .header(AUTHORIZATION, format!("{} {}", "token", token))
-            .header(ACCEPT, "application/vnd.github.v3+json")
-            .build()
+        let req = GithubReqBuilder::User
+            .build_request(&client, &token)
             .unwrap();
-
         let u = client
             .execute(req)
             .await
@@ -133,17 +149,16 @@ impl GitHubRateLimit {
 
         //FIXME: we will (might?) need a RWLock on users structure
         for u in self.users.iter_mut() {
-            let req = client
-                .request(Method::GET, "https://api.github.com/rate_limit")
-                .header(USER_AGENT, "monitorbot-rust-lang")
-                .header(AUTHORIZATION, format!("{} {}", "token", u.token))
-                .header(ACCEPT, "application/vnd.github.v3+json")
-                .build()
+            let req = GithubReqBuilder::RateLimit
+                .build_request(&client, &u.token)
                 .unwrap();
-
             let mut data = client
-                .execute(req).await.unwrap()
-                .json::<GithubRateLimit>().await.unwrap();
+                .execute(req)
+                .await
+                .unwrap()
+                .json::<GithubRateLimit>()
+                .await
+                .unwrap();
 
             let remaining = data.rate.remove("remaining").unwrap_or(0);
             let limit = data.rate.remove("limit").unwrap_or(0);
