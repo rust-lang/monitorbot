@@ -6,7 +6,8 @@ use monitorbot::MetricProvider;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "0.0.0.0:3000".parse().unwrap();
+    dotenv::dotenv().ok();
+    let addr = "0.0.0.0:3001".parse().unwrap();
     let provider = MetricProvider::new();
     if let Err(e) = register_collectors(&provider).await {
         eprintln!("Unable to register collectors: {:#?}", e);
