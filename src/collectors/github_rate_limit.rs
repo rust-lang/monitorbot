@@ -16,7 +16,7 @@ struct User {
 
 const GH_API_USER_ENDPOINT: &str = "https://api.github.com/user";
 const GH_API_RATE_LIMIT_ENDPOINT: &str = "https://api.github.com/rate_limit";
-const GH_API_TOKENS_ENV_KEY: &str = "GITHUB_API_TOKENS";
+const GH_API_TOKENS_ENV_KEY: &str = "MONITORBOT_RATE_LIMIT_TOKENS";
 const DATA_CACHE_UPDATE_SECONDS: u64 = 120;
 
 enum GithubReqBuilder {
@@ -25,16 +25,19 @@ enum GithubReqBuilder {
 }
 
 impl GithubReqBuilder {
-    pub fn build_request(&self, client: &Client, token: &str) -> Result<Request, reqwest::Error> {
+    fn build_request(&self, client: &Client, token: &str) -> Result<Request, reqwest::Error> {
         let rb = match self {
             Self::User => client.request(Method::GET, GH_API_USER_ENDPOINT),
             Self::RateLimit => client.request(Method::GET, GH_API_RATE_LIMIT_ENDPOINT),
         };
 
-        rb.header(USER_AGENT, "monitorbot-rust-lang")
-            .header(AUTHORIZATION, format!("{} {}", "token", token))
-            .header(ACCEPT, "application/vnd.github.v3+json")
-            .build()
+        rb.header(
+            USER_AGENT,
+            "https://github.com/rust-lang/monitorbot (infra@rust-lang.org)",
+        )
+        .header(AUTHORIZATION, format!("{} {}", "token", token))
+        .header(ACCEPT, "application/vnd.github.v3+json")
+        .build()
     }
 }
 
@@ -139,7 +142,7 @@ impl GitHubRateLimit {
         u.login
     }
 
-    pub async fn update_stats(&mut self) {
+    async fn update_stats(&mut self) {
         #[derive(Debug, serde::Deserialize)]
         struct GithubRateLimit {
             pub rate: HashMap<String, usize>,
