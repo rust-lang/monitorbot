@@ -19,7 +19,7 @@ impl MetricProvider {
         Self { register }
     }
 
-    pub fn register_collector(
+    fn register_collector(
         &self,
         collector: impl Collector + 'static,
     ) -> Result<(), prometheus::Error> {
