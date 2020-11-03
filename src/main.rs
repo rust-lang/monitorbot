@@ -1,6 +1,5 @@
-use crate::collectors::register_collectors;
 use hyper::Server;
-use monitorbot::{MetricProvider, collectors};
+use monitorbot::{MetricProvider, collectors::register_collectors};
 use std::net::SocketAddr;
 use std::str::FromStr;
 
