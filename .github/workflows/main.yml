@@ -1,0 +1,31 @@
+---
+
+name: CI
+on:
+  push:
+    branches:
+      - master
+  pull_request: {}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the source code
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        run: rustup update stable && rustup default stable
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Lint the code with Clippy
+        run: cargo clippy -- -Dwarnings
+
+      - name: Run the test suite
+        run: cargo test
+
+      - name: Build the Docker container
+        run: docker build -t monitorbot .
