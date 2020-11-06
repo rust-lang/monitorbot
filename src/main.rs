@@ -1,5 +1,5 @@
 use hyper::Server;
-use monitorbot::{MetricProvider, collectors::register_collectors};
+use monitorbot::{collectors::register_collectors, MetricProvider};
 use std::net::SocketAddr;
 use std::str::FromStr;
 
@@ -7,7 +7,7 @@ use std::str::FromStr;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
 
-    let port = std::env::var("MONITORBOT_PORT").unwrap_or("80".to_string());
+    let port = std::env::var("MONITORBOT_PORT").unwrap_or_else(|_| "80".to_string());
     let addr = match u16::from_str(port.as_ref()) {
         Ok(port) => SocketAddr::from(([0, 0, 0, 0], port)),
         Err(e) => {
