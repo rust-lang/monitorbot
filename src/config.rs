@@ -69,6 +69,10 @@ impl Error for ConfigError {}
 
 #[cfg(test)]
 mod tests {
+    // note: if you add new unit tests here and need to set up an env var
+    // you need to use a unique env var name for your test. cargo by default will run
+    // your tests in parallel using threads and one test setup may interfere with
+    // another test's outcome if they both share the same env var name.
     use super::Config;
     use super::ENVIRONMENT_VARIABLE_PREFIX;
 
@@ -87,10 +91,10 @@ mod tests {
     fn config_some_value_string_present() {
         let expected: String = String::from("12345678");
         std::env::set_var(
-            format!("{}TEST_VAR", ENVIRONMENT_VARIABLE_PREFIX),
+            format!("{}TEST_VAR_STR", ENVIRONMENT_VARIABLE_PREFIX),
             &expected,
         );
-        let result = match Config::maybe_env("TEST_VAR") {
+        let result = match Config::maybe_env("TEST_VAR_STR") {
             Ok(r) => r,
             Err(_) => panic!("return value as Err, we expected Option"), // we failed
         };
@@ -116,7 +120,7 @@ mod tests {
     #[test]
     fn config_default_value_u16_not_present() {
         let expected = 3001u16;
-        let result = match Config::default_env::<u16>("PORT", expected) {
+        let result = match Config::default_env::<u16>("PORT_NOT_SET", expected) {
             Ok(r) => r,
             Err(_) => panic!("return value as Err, we expected Option"), // we failed
         };
