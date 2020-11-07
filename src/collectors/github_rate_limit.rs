@@ -1,5 +1,6 @@
 use prometheus::{core::Collector, IntGauge, Opts};
 
+use crate::Config;
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use reqwest::{Client, Method, Request};
 use std::collections::HashMap;
@@ -16,8 +17,6 @@ struct User {
 
 const GH_API_USER_ENDPOINT: &str = "https://api.github.com/user";
 const GH_API_RATE_LIMIT_ENDPOINT: &str = "https://api.github.com/rate_limit";
-const GH_API_TOKENS_ENV_KEY: &str = "MONITORBOT_RATE_LIMIT_TOKENS";
-const DATA_CACHE_UPDATE_SECONDS: u64 = 120;
 
 enum GithubReqBuilder {
     User,
@@ -48,11 +47,12 @@ pub struct GitHubRateLimit {
 }
 
 impl GitHubRateLimit {
-    pub async fn new() -> Self {
-        let tokens: Vec<String> = match std::env::var(GH_API_TOKENS_ENV_KEY) {
-            Ok(t) => t.split(',').map(|v| v.trim().to_string()).collect(),
-            _ => panic!("{} env var not set.", GH_API_TOKENS_ENV_KEY),
-        };
+    pub async fn new(config: &Config) -> Self {
+        let tokens: Vec<String> = config
+            .gh_rate_limit_tokens
+            .split(',')
+            .map(|v| v.trim().to_string())
+            .collect();
 
         let users = Self::get_users_for_tokens(tokens).await;
         let descriptions = Vec::new();
@@ -62,11 +62,12 @@ impl GitHubRateLimit {
             descriptions,
         };
 
+        let refresh_rate = config.gh_rate_limit_stats_cache_refresh;
         let mut rv2 = rv.clone();
         tokio::spawn(async move {
             loop {
                 rv2.update_stats().await;
-                tokio::time::delay_for(Duration::from_secs(DATA_CACHE_UPDATE_SECONDS)).await;
+                tokio::time::delay_for(Duration::from_secs(refresh_rate)).await;
             }
         });
 

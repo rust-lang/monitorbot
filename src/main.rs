@@ -1,22 +1,17 @@
 use hyper::Server;
+use monitorbot::Config;
 use monitorbot::{collectors::register_collectors, MetricProvider};
 use std::net::SocketAddr;
-use std::str::FromStr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
 
-    let port = std::env::var("MONITORBOT_PORT").unwrap_or_else(|_| "3001".to_string());
-    let addr = match u16::from_str(port.as_ref()) {
-        Ok(port) => SocketAddr::from(([0, 0, 0, 0], port)),
-        Err(e) => {
-            eprintln!("Unable to parse MONITOR PORT: {:?}", e);
-            return Ok(());
-        }
-    };
+    let config = Config::from_env()?;
+    let port = config.port;
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
-    let provider = MetricProvider::new();
+    let provider = MetricProvider::new(config);
     if let Err(e) = register_collectors(&provider).await {
         eprintln!("Unable to register collectors: {:#?}", e);
         return Ok(());
