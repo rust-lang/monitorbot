@@ -20,10 +20,7 @@ impl Config {
         Ok(Self {
             port: default_env("PORT", 3001)?,
             gh_rate_limit_tokens: require_env("RATE_LIMIT_TOKENS")?,
-            gh_rate_limit_stats_cache_refresh: default_env(
-                "GH_RATE_LIMIT_STATS_REFRESH",
-                120,
-            )?,
+            gh_rate_limit_stats_cache_refresh: default_env("GH_RATE_LIMIT_STATS_REFRESH", 120)?,
         })
     }
 }
@@ -73,8 +70,8 @@ mod tests {
     // you need to use a unique env var name for your test. cargo by default will run
     // your tests in parallel using threads and one test setup may interfere with
     // another test's outcome if they both share the same env var name.
-    use super::{maybe_env, default_env, require_env};
     use super::ENVIRONMENT_VARIABLE_PREFIX;
+    use super::{default_env, maybe_env, require_env};
 
     #[test]
     fn config_some_value_not_present() {
