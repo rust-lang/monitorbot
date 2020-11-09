@@ -18,42 +18,42 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
         Ok(Self {
-            port: Self::default_env("PORT", 3001)?,
-            gh_rate_limit_tokens: Self::require_env("RATE_LIMIT_TOKENS")?,
-            gh_rate_limit_stats_cache_refresh: Self::default_env::<u64>(
+            port: default_env("PORT", 3001)?,
+            gh_rate_limit_tokens: require_env("RATE_LIMIT_TOKENS")?,
+            gh_rate_limit_stats_cache_refresh: default_env(
                 "GH_RATE_LIMIT_STATS_REFRESH",
-                120u64,
+                120,
             )?,
         })
     }
+}
 
-    fn maybe_env<T: FromStr>(name: &str) -> Result<Option<T>, ConfigError> {
-        match std::env::var(format!("{}{}", ENVIRONMENT_VARIABLE_PREFIX, name)) {
-            Ok(val) => match val.parse() {
-                Ok(v) => Ok(Some(v)),
-                _ => Err(ConfigError(format!(
-                    "the {} environment variable has invalid content",
-                    name
-                ))),
-            },
-            Err(VarError::NotPresent) => Ok(None),
-            Err(not_unicode) => Err(ConfigError(format!("the {} {}", name, not_unicode))),
-        }
-    }
-
-    fn require_env<T: FromStr>(name: &str) -> Result<T, ConfigError> {
-        match Self::maybe_env::<T>(name)? {
-            Some(res) => Ok(res),
-            None => Err(ConfigError(format!(
-                "missing environment variable {}{}",
-                ENVIRONMENT_VARIABLE_PREFIX, name
+fn maybe_env<T: FromStr>(name: &str) -> Result<Option<T>, ConfigError> {
+    match std::env::var(format!("{}{}", ENVIRONMENT_VARIABLE_PREFIX, name)) {
+        Ok(val) => match val.parse() {
+            Ok(v) => Ok(Some(v)),
+            _ => Err(ConfigError(format!(
+                "the {} environment variable has invalid content",
+                name
             ))),
-        }
+        },
+        Err(VarError::NotPresent) => Ok(None),
+        Err(not_unicode) => Err(ConfigError(format!("the {} {}", name, not_unicode))),
     }
+}
 
-    fn default_env<T: FromStr>(name: &str, default: T) -> Result<T, ConfigError> {
-        Ok(Self::maybe_env::<T>(name)?.unwrap_or(default))
+fn require_env<T: FromStr>(name: &str) -> Result<T, ConfigError> {
+    match maybe_env::<T>(name)? {
+        Some(res) => Ok(res),
+        None => Err(ConfigError(format!(
+            "missing environment variable {}{}",
+            ENVIRONMENT_VARIABLE_PREFIX, name
+        ))),
     }
+}
+
+fn default_env<T: FromStr>(name: &str, default: T) -> Result<T, ConfigError> {
+    Ok(maybe_env::<T>(name)?.unwrap_or(default))
 }
 
 #[derive(Debug, PartialEq)]
@@ -73,13 +73,13 @@ mod tests {
     // you need to use a unique env var name for your test. cargo by default will run
     // your tests in parallel using threads and one test setup may interfere with
     // another test's outcome if they both share the same env var name.
-    use super::Config;
+    use super::{maybe_env, default_env, require_env};
     use super::ENVIRONMENT_VARIABLE_PREFIX;
 
     #[test]
     fn config_some_value_not_present() {
         let expected: Option<String> = None;
-        let result = match Config::maybe_env("NOT_EXISTENT") {
+        let result = match maybe_env("NOT_EXISTENT") {
             Ok(r) => r,
             Err(_) => panic!("return value as Err, we expected Option"), // we failed
         };
@@ -94,7 +94,7 @@ mod tests {
             format!("{}TEST_VAR_STR", ENVIRONMENT_VARIABLE_PREFIX),
             &expected,
         );
-        let result = match Config::maybe_env("TEST_VAR_STR") {
+        let result = match maybe_env("TEST_VAR_STR") {
             Ok(r) => r,
             Err(_) => panic!("return value as Err, we expected Option"), // we failed
         };
@@ -109,7 +109,7 @@ mod tests {
             format!("{}TEST_VAR", ENVIRONMENT_VARIABLE_PREFIX),
             expected.to_string(),
         );
-        let result = match Config::maybe_env::<u16>("TEST_VAR") {
+        let result = match maybe_env("TEST_VAR") {
             Ok(r) => r,
             Err(_) => panic!("return value as Err, we expected Option"), // we failed
         };
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn config_default_value_u16_not_present() {
         let expected = 3001u16;
-        let result = match Config::default_env::<u16>("PORT_NOT_SET", expected) {
+        let result = match default_env("PORT_NOT_SET", expected) {
             Ok(r) => r,
             Err(_) => panic!("return value as Err, we expected Option"), // we failed
         };
@@ -136,7 +136,7 @@ mod tests {
             expected.to_string(),
         );
 
-        let result = match Config::default_env::<u16>("PORT", 3001u16) {
+        let result = match default_env("PORT", 3001u16) {
             Ok(r) => r,
             Err(_) => panic!("return value as Err, we expected Option"), // we failed
         };
@@ -152,7 +152,7 @@ mod tests {
             expected.to_string(),
         );
 
-        let result = match Config::require_env::<String>("RATE_LIMIT_TOKENS") {
+        let result = match require_env::<String>("RATE_LIMIT_TOKENS") {
             Ok(r) => r,
             Err(_) => panic!("return value as Err, we expected Option"), // we failed
         };
@@ -165,7 +165,7 @@ mod tests {
         use super::ConfigError;
 
         let env_var = format!("{}TOKENS_NOT_PRESENT", ENVIRONMENT_VARIABLE_PREFIX);
-        match Config::require_env::<String>("TOKENS_NOT_PRESENT") {
+        match require_env::<String>("TOKENS_NOT_PRESENT") {
             Ok(r) => r,
             Err(e) => {
                 assert_eq!(
