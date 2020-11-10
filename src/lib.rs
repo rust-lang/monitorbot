@@ -1,6 +1,8 @@
 #![allow(clippy::new_without_default)]
 
 pub mod collectors;
+mod config;
+pub use config::Config;
 
 use prometheus::core::Collector;
 use prometheus::{Encoder, Registry};
@@ -13,12 +15,13 @@ use hyper::{Body, Method, Request, Response, StatusCode};
 #[derive(Clone, Debug)]
 pub struct MetricProvider {
     register: prometheus::Registry,
+    config: Config,
 }
 
 impl MetricProvider {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         let register = Registry::new_custom(None, None).expect("Unable to build Registry");
-        Self { register }
+        Self { register, config }
     }
 
     fn register_collector(

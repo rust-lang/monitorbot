@@ -6,7 +6,7 @@ use futures::FutureExt;
 
 // register collectors for metrics gathering
 pub async fn register_collectors(p: &MetricProvider) -> Result<(), prometheus::Error> {
-    GitHubRateLimit::new()
+    GitHubRateLimit::new(&p.config)
         .map(|rl| p.register_collector(rl))
         .await
 }
