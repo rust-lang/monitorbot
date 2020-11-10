@@ -15,3 +15,4 @@ tokio = { version = "0.2", features = ["full"] }
 hyper = "0.13"
 prometheus = "0.10"
 futures = "0.3"
+anyhow = "1.0"

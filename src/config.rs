@@ -1,6 +1,5 @@
+use anyhow::{Context, Error};
 use std::env::VarError;
-use std::error::Error;
-use std::fmt;
 use std::str::FromStr;
 
 const ENVIRONMENT_VARIABLE_PREFIX: &str = "MONITORBOT_";
@@ -16,7 +15,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, Error> {
         Ok(Self {
             port: default_env("PORT", 3001)?,
             gh_rate_limit_tokens: require_env("RATE_LIMIT_TOKENS")?,
@@ -25,44 +24,44 @@ impl Config {
     }
 }
 
-fn maybe_env<T: FromStr>(name: &str) -> Result<Option<T>, ConfigError> {
+fn maybe_env<T>(name: &str) -> Result<Option<T>, Error>
+where
+    T: FromStr,
+    Error: From<T::Err>,
+{
     match std::env::var(format!("{}{}", ENVIRONMENT_VARIABLE_PREFIX, name)) {
-        Ok(val) => match val.parse() {
-            Ok(v) => Ok(Some(v)),
-            _ => Err(ConfigError(format!(
-                "the {} environment variable has invalid content",
-                name
-            ))),
-        },
+        Ok(val) => Ok(Some(val.parse().map_err(Error::from).context(format!(
+            "the {} environment variable has invalid content",
+            name
+        ))?)),
         Err(VarError::NotPresent) => Ok(None),
-        Err(not_unicode) => Err(ConfigError(format!("the {} {}", name, not_unicode))),
+        Err(VarError::NotUnicode(_)) => {
+            anyhow::bail!("environment variable {} is not unicode!", name)
+        }
     }
 }
 
-fn require_env<T: FromStr>(name: &str) -> Result<T, ConfigError> {
+fn require_env<T>(name: &str) -> Result<T, Error>
+where
+    T: FromStr,
+    Error: From<T::Err>,
+{
     match maybe_env::<T>(name)? {
         Some(res) => Ok(res),
-        None => Err(ConfigError(format!(
-            "missing environment variable {}{}",
-            ENVIRONMENT_VARIABLE_PREFIX, name
-        ))),
+        None => anyhow::bail!(
+            "missing environment variable {}",
+            format!("{}{}", ENVIRONMENT_VARIABLE_PREFIX, name)
+        ),
     }
 }
 
-fn default_env<T: FromStr>(name: &str, default: T) -> Result<T, ConfigError> {
+fn default_env<T>(name: &str, default: T) -> Result<T, Error>
+where
+    T: FromStr,
+    Error: From<T::Err>,
+{
     Ok(maybe_env::<T>(name)?.unwrap_or(default))
 }
-
-#[derive(Debug, PartialEq)]
-pub struct ConfigError(String);
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Error for ConfigError {}
 
 #[cfg(test)]
 mod tests {
@@ -151,7 +150,7 @@ mod tests {
 
         let result = match require_env::<String>("RATE_LIMIT_TOKENS") {
             Ok(r) => r,
-            Err(_) => panic!("return value as Err, we expected Option"), // we failed
+            Err(_) => panic!("return value as Err, we expected str"), // we failed
         };
 
         assert_eq!(expected, result);
@@ -159,21 +158,13 @@ mod tests {
 
     #[test]
     fn config_require_string_not_present() {
-        use super::ConfigError;
-
         let env_var = format!("{}TOKENS_NOT_PRESENT", ENVIRONMENT_VARIABLE_PREFIX);
-        match require_env::<String>("TOKENS_NOT_PRESENT") {
-            Ok(r) => r,
-            Err(e) => {
-                assert_eq!(
-                    ConfigError(format!("missing environment variable {}", env_var)),
-                    e
-                );
-                return;
-            }
-        };
+        if let Err(e) = require_env::<String>("TOKENS_NOT_PRESENT") {
+            let expected = anyhow::anyhow!("missing environment variable {}", env_var);
+            assert_eq!(e.to_string(), expected.to_string());
+            return;
+        }
 
-        // we failed if our code gets here
-        panic!("return value as Err, we expected Option");
+        panic!("expected an Err");
     }
 }
