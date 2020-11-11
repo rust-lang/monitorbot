@@ -11,5 +11,5 @@ FROM ubuntu:focal as binary
 
 RUN apt-get update && apt-get install -y ca-certificates
 COPY --from=build /target/release/monitorbot /usr/local/bin/
-ENV PORT=80
+ENV MONITORBOT_PORT=80
 ENTRYPOINT ["monitorbot"]
