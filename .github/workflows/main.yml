@@ -29,3 +29,12 @@ jobs:
 
       - name: Build the Docker container
         run: docker build -t monitorbot .
+
+      - name: Upload the Docker image to AWS ECR
+        uses: rust-lang/simpleinfra/github-actions/upload-docker-image@master
+        with:
+          image: monitorbot
+          repository: monitorbot
+          region: us-west-1
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
