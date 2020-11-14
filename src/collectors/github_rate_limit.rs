@@ -75,7 +75,7 @@ impl GitHubRateLimit {
     }
 
     async fn get_users_for_tokens(tokens: Vec<String>) -> Vec<User> {
-        let ns = String::from("rustinfra_github_rate_limit");
+        let ns = String::from("monitorbot_github_rate_limit");
         let mut rv: Vec<User> = Vec::new();
         for token in tokens.into_iter() {
             let ns2 = ns.clone();
