@@ -1,7 +1,7 @@
 use prometheus::{core::Collector, IntGauge, Opts};
 
 use crate::Config;
-use anyhow::{Error, Result};
+use anyhow::{Context, Error, Result};
 use log::{debug, error};
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use reqwest::{Client, Method, Request};
@@ -26,7 +26,7 @@ enum GithubReqBuilder {
 }
 
 impl GithubReqBuilder {
-    fn build_request(&self, client: &Client, token: &str) -> Result<Request> {
+    fn build_request(&self, client: &Client, token: &str) -> Result<Request, Error> {
         let rb = match self {
             Self::User => client.request(Method::GET, GH_API_USER_ENDPOINT),
             Self::RateLimit => client.request(Method::GET, GH_API_RATE_LIMIT_ENDPOINT),
@@ -49,21 +49,16 @@ pub struct GitHubRateLimit {
 }
 
 impl GitHubRateLimit {
-    pub async fn new(config: &Config) -> Self {
+    pub async fn new(config: &Config) -> Result<Self, Error> {
         let tokens: Vec<String> = config
             .gh_rate_limit_tokens
             .split(',')
             .map(|v| v.trim().to_string())
             .collect();
 
-        let users = match Self::get_users_for_tokens(tokens).await {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Unable to get usernames for rate limit stats: {:?}", e);
-                //TODO: we going empty for now, how do we want to handle this in the future?
-                Vec::new()
-            }
-        };
+        let users = Self::get_users_for_tokens(tokens)
+            .await
+            .context("Unable to get usernames for rate limit stats")?;
 
         let rv = Self { users };
 
@@ -71,15 +66,18 @@ impl GitHubRateLimit {
         let mut rv2 = rv.clone();
         tokio::spawn(async move {
             loop {
-                rv2.update_stats().await;
+                if let Err(e) = rv2.update_stats().await {
+                    error!("{:#?}", e);
+                }
+
                 tokio::time::delay_for(Duration::from_secs(refresh_rate)).await;
             }
         });
 
-        rv
+        Ok(rv)
     }
 
-    async fn get_users_for_tokens(tokens: Vec<String>) -> Result<Vec<User>> {
+    async fn get_users_for_tokens(tokens: Vec<String>) -> Result<Vec<User>, Error> {
         let ns = String::from("monitorbot_github_rate_limit");
         let mut rv: Vec<User> = Vec::new();
         for token in tokens.into_iter() {
@@ -127,7 +125,7 @@ impl GitHubRateLimit {
         Ok(rv)
     }
 
-    async fn get_github_api_username(token: &str) -> Result<String> {
+    async fn get_github_api_username(token: &str) -> Result<String, Error> {
         #[derive(serde::Deserialize)]
         struct GithubUser {
             pub login: String,
@@ -148,7 +146,7 @@ impl GitHubRateLimit {
         Ok(u.login)
     }
 
-    async fn update_stats(&mut self) {
+    async fn update_stats(&mut self) -> Result<(), Error> {
         debug!("Updating rate limit stats");
 
         #[derive(Debug, serde::Deserialize)]
@@ -158,29 +156,19 @@ impl GitHubRateLimit {
 
         let client = reqwest::Client::new();
         for u in self.users.iter_mut() {
-            let req = match GithubReqBuilder::RateLimit.build_request(&client, &u.token) {
-                Ok(r) => r,
-                Err(e) => {
-                    error!("Unable to build request to update stats: {:?}", e);
-                    return;
-                }
-            };
+            let req = GithubReqBuilder::RateLimit
+                .build_request(&client, &u.token)
+                .context("Unable to build request to update stats")?;
 
-            let response = match client.execute(req).await {
-                Ok(resp) => resp,
-                Err(e) => {
-                    error!("Unable to execute request to update stats: {:?}", e);
-                    return;
-                }
-            };
+            let response = client
+                .execute(req)
+                .await
+                .context("Unable to execute request to update stats")?;
 
-            let mut data = match response.json::<GithubRateLimit>().await {
-                Ok(d) => d,
-                Err(e) => {
-                    error!("Unable to deserialize rate limit stats: {:?}", e);
-                    return;
-                }
-            };
+            let mut data = response
+                .json::<GithubRateLimit>()
+                .await
+                .context("Unable to deserialize rate limit stats")?;
 
             let remaining = data.rate.remove("remaining").unwrap_or(0);
             let limit = data.rate.remove("limit").unwrap_or(0);
@@ -190,6 +178,8 @@ impl GitHubRateLimit {
             u.reset.set(reset as i64);
             u.limit.set(limit as i64);
         }
+
+        Ok(())
     }
 }
 

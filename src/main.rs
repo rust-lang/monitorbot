@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Error, Result};
 use hyper::Server;
 use log::info;
 use monitorbot::Config;
@@ -6,7 +6,7 @@ use monitorbot::{collectors::register_collectors, MetricProvider};
 use std::net::SocketAddr;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), Error> {
     dotenv::dotenv().ok();
     env_logger::init();
 

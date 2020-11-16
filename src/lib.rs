@@ -27,13 +27,13 @@ impl MetricProvider {
         Self { register, config }
     }
 
-    fn register_collector(&self, collector: impl Collector + 'static) -> Result<()> {
+    fn register_collector(&self, collector: impl Collector + 'static) -> Result<(), Error> {
         self.register
             .register(Box::new(collector))
             .map_err(Error::from)
     }
 
-    fn gather_with_encoder<BUF>(&self, encoder: impl Encoder, buf: &mut BUF) -> Result<()>
+    fn gather_with_encoder<BUF>(&self, encoder: impl Encoder, buf: &mut BUF) -> Result<(), Error>
     where
         BUF: std::io::Write,
     {
