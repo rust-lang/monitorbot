@@ -132,16 +132,8 @@ impl GitHubRateLimit {
         }
 
         let client = reqwest::Client::new();
-        let req = GithubReqBuilder::User
-            .build_request(&client, &token)
-            .unwrap();
-        let u = client
-            .execute(req)
-            .await
-            .map_err(Error::from)?
-            .json::<GithubUser>()
-            .await
-            .map_err(Error::from)?;
+        let req = GithubReqBuilder::User.build_request(&client, &token)?;
+        let u = client.execute(req).await?.json::<GithubUser>().await?;
 
         Ok(u.login)
     }
