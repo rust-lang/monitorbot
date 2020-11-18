@@ -1,11 +1,14 @@
+use anyhow::{bail, Error, Result};
 use hyper::Server;
+use log::info;
 use monitorbot::Config;
 use monitorbot::{collectors::register_collectors, MetricProvider};
 use std::net::SocketAddr;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Error> {
     dotenv::dotenv().ok();
+    env_logger::init();
 
     let config = Config::from_env()?;
     let port = config.port;
@@ -13,15 +16,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let provider = MetricProvider::new(config);
     if let Err(e) = register_collectors(&provider).await {
-        eprintln!("Unable to register collectors: {:#?}", e);
-        return Ok(());
+        bail!("(Registering collectors) {}", e)
     }
 
     let server = Server::bind(&addr).serve(provider.into_service());
-    println!("Server listening on port {}", port);
+    info!("Server listening on port: {}", port);
 
     if let Err(e) = server.await {
-        eprintln!("Server error: {}", e);
+        bail!("(Hyper server error) {}", e);
     }
 
     Ok(())

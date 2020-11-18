@@ -2,15 +2,18 @@
 
 pub mod collectors;
 mod config;
+
 pub use config::Config;
 
 use prometheus::core::Collector;
 use prometheus::{Encoder, Registry};
 
+use anyhow::{Error, Result};
 use futures::future;
 use futures::task::{Context, Poll};
 use hyper::service::Service;
 use hyper::{Body, Method, Request, Response, StatusCode};
+use log::{debug, error};
 
 #[derive(Clone, Debug)]
 pub struct MetricProvider {
@@ -24,15 +27,19 @@ impl MetricProvider {
         Self { register, config }
     }
 
-    fn register_collector(
-        &self,
-        collector: impl Collector + 'static,
-    ) -> Result<(), prometheus::Error> {
-        self.register.register(Box::new(collector))
+    fn register_collector(&self, collector: impl Collector + 'static) -> Result<(), Error> {
+        self.register
+            .register(Box::new(collector))
+            .map_err(Error::from)
     }
 
-    fn gather_with_encoder<BUF: std::io::Write>(&self, encoder: impl Encoder, buf: &mut BUF) {
-        encoder.encode(&self.register.gather(), buf).unwrap();
+    fn gather_with_encoder<BUF>(&self, encoder: impl Encoder, buf: &mut BUF) -> Result<(), Error>
+    where
+        BUF: std::io::Write,
+    {
+        encoder
+            .encode(&self.register.gather(), buf)
+            .map_err(Error::from)
     }
 
     pub fn into_service(self) -> MetricProviderFactory {
@@ -50,17 +57,26 @@ impl Service<Request<Body>> for MetricProvider {
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
+        debug!("New Request to endpoint {}", req.uri().path());
+
         let output = match (req.method(), req.uri().path()) {
             // Metrics handler
             (&Method::GET, "/metrics") => {
                 let encoder = prometheus::TextEncoder::new();
                 let mut buffer = Vec::<u8>::new();
-                self.gather_with_encoder(encoder, &mut buffer);
-
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .body(Body::from(buffer))
-                    .unwrap()
+                match self.gather_with_encoder(encoder, &mut buffer) {
+                    Ok(_) => Response::builder()
+                        .status(StatusCode::OK)
+                        .body(Body::from(buffer))
+                        .unwrap(),
+                    Err(e) => {
+                        error!("{:?}", e);
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Body::empty())
+                            .unwrap()
+                    }
+                }
             }
             // All other paths and methods
             _ => Response::builder()
