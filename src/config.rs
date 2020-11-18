@@ -6,6 +6,8 @@ const ENVIRONMENT_VARIABLE_PREFIX: &str = "MONITORBOT_";
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    // authorization secret (token) to be able to scrape the metrics endpoint
+    pub secret: String,
     // http server port to bind to
     pub port: u16,
     // github api tokens to collect rate limit statistics
@@ -17,6 +19,7 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self, Error> {
         Ok(Self {
+            secret: require_env("SECRET")?,
             port: default_env("PORT", 3001)?,
             gh_rate_limit_tokens: require_env("RATE_LIMIT_TOKENS")?,
             gh_rate_limit_stats_cache_refresh: default_env("GH_RATE_LIMIT_STATS_REFRESH", 120)?,
