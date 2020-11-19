@@ -103,7 +103,7 @@ fn is_auth_token_valid(secret: &str, headers: &HeaderMap<HeaderValue>) -> bool {
             |_| false,
             |t| {
                 if let Some(t) = t.strip_prefix("Bearer ") {
-                    t.eq(secret)
+                    t == secret
                 } else {
                     false
                 }
