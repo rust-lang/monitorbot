@@ -99,17 +99,16 @@ impl Service<Request<Body>> for MetricProvider {
 
 fn is_auth_token_valid(secret: &str, headers: &HeaderMap<HeaderValue>) -> bool {
     match headers.get(AUTHORIZATION) {
-        Some(value) => value
-            .to_str()
-            .ok()
-            .map(|t| {
-                if let Some(t) = t.strip_prefix("Bearer") {
-                    t.trim().eq(secret)
+        Some(value) => value.to_str().map_or_else(
+            |_| false,
+            |t| {
+                if let Some(t) = t.strip_prefix("Bearer ") {
+                    t.eq(secret)
                 } else {
                     false
                 }
-            })
-            .unwrap(),
+            },
+        ),
         None => false,
     }
 }
@@ -140,8 +139,8 @@ mod tests {
     fn auth_token_strip_bearer() {
         use hyper::header::AUTHORIZATION;
 
-        let secret = "aASgwyfb44562uj36";
-        let token = "Bearer aASgwyfb44562uj36";
+        let secret = "aASgwyfbFAKETOKEN44562uj36";
+        let token = "Bearer aASgwyfbFAKETOKEN44562uj36";
         let v = HeaderValue::from_static(token);
         let mut hv = HeaderMap::new();
         hv.insert(AUTHORIZATION, v);
@@ -149,5 +148,20 @@ mod tests {
         // should be true
         let result = is_auth_token_valid(secret, &hv);
         assert!(result);
+    }
+
+    #[test]
+    fn auth_token_strip_bearer_fail() {
+        use hyper::header::AUTHORIZATION;
+
+        let secret = "aASgwyfbFAKETOKEN44562uj36";
+        let token = "Bearer aASgwyfbFAKETOKEN44562uj36 "; // notice the whitespace in the end
+        let v = HeaderValue::from_static(token);
+        let mut hv = HeaderMap::new();
+        hv.insert(AUTHORIZATION, v);
+
+        // should be true
+        let result = is_auth_token_valid(secret, &hv);
+        assert_eq!(false, result);
     }
 }
