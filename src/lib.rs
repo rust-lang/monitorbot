@@ -11,8 +11,10 @@ use prometheus::{Encoder, Registry};
 use anyhow::{Error, Result};
 use futures::future;
 use futures::task::{Context, Poll};
+use hyper::header::AUTHORIZATION;
+use hyper::http::HeaderValue;
 use hyper::service::Service;
-use hyper::{Body, Method, Request, Response, StatusCode};
+use hyper::{Body, HeaderMap, Method, Request, Response, StatusCode};
 use log::{debug, error};
 
 #[derive(Clone, Debug)]
@@ -59,9 +61,10 @@ impl Service<Request<Body>> for MetricProvider {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         debug!("New Request to endpoint {}", req.uri().path());
 
-        let output = match (req.method(), req.uri().path()) {
+        let authorized = is_auth_token_valid(&self.config.secret, req.headers());
+        let output = match (req.method(), req.uri().path(), authorized) {
             // Metrics handler
-            (&Method::GET, "/metrics") => {
+            (&Method::GET, "/metrics", true) => {
                 let encoder = prometheus::TextEncoder::new();
                 let mut buffer = Vec::<u8>::new();
                 match self.gather_with_encoder(encoder, &mut buffer) {
@@ -78,6 +81,11 @@ impl Service<Request<Body>> for MetricProvider {
                     }
                 }
             }
+            // Unauthorized request
+            (&Method::GET, "/metrics", false) => Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Body::empty())
+                .unwrap(),
             // All other paths and methods
             _ => Response::builder()
                 .status(StatusCode::OK)
@@ -86,6 +94,22 @@ impl Service<Request<Body>> for MetricProvider {
         };
 
         future::ok(output)
+    }
+}
+
+fn is_auth_token_valid(secret: &str, headers: &HeaderMap<HeaderValue>) -> bool {
+    match headers.get(AUTHORIZATION) {
+        Some(value) => value.to_str().map_or_else(
+            |_| false,
+            |t| {
+                if let Some(t) = t.strip_prefix("Bearer ") {
+                    t == secret
+                } else {
+                    false
+                }
+            },
+        ),
+        None => false,
     }
 }
 
@@ -102,5 +126,42 @@ impl<T> Service<T> for MetricProviderFactory {
 
     fn call(&mut self, _: T) -> Self::Future {
         future::ok(self.0.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::is_auth_token_valid;
+    use hyper::http::HeaderValue;
+    use hyper::HeaderMap;
+
+    #[test]
+    fn auth_token_strip_bearer() {
+        use hyper::header::AUTHORIZATION;
+
+        let secret = "aASgwyfbFAKETOKEN44562uj36";
+        let token = "Bearer aASgwyfbFAKETOKEN44562uj36";
+        let v = HeaderValue::from_static(token);
+        let mut hv = HeaderMap::new();
+        hv.insert(AUTHORIZATION, v);
+
+        // should be true
+        let result = is_auth_token_valid(secret, &hv);
+        assert!(result);
+    }
+
+    #[test]
+    fn auth_token_strip_bearer_fail() {
+        use hyper::header::AUTHORIZATION;
+
+        let secret = "aASgwyfbFAKETOKEN44562uj36";
+        let token = "Bearer aASgwyfbFAKETOKEN44562uj36 "; // notice the whitespace in the end
+        let v = HeaderValue::from_static(token);
+        let mut hv = HeaderMap::new();
+        hv.insert(AUTHORIZATION, v);
+
+        // should be true
+        let result = is_auth_token_valid(secret, &hv);
+        assert_eq!(false, result);
     }
 }
