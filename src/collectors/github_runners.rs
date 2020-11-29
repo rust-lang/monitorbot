@@ -1,11 +1,9 @@
-use crate::Config;
+use crate::{http, http::is_token_flagged, Config};
 use anyhow::Error;
-use log::{debug, error};
+use log::{debug, error, warn};
 use prometheus::core::Desc;
 use prometheus::proto::MetricFamily;
 use prometheus::{core::Collector, IntGauge, Opts};
-use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
-use reqwest::Method;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::time::Duration;
@@ -91,25 +89,33 @@ impl GithubRunners {
 
     async fn update_stats(&mut self) -> Result<(), Error> {
         let mut gauges = Vec::new();
-        let client = reqwest::Client::new();
-
         for repo in self.repos.iter() {
             let url = String::from(GH_RUNNERS_ENDPOINT).replace("{owner_repo}", repo);
 
+            // does this token still able to query github api? (rate limit wise)
+            match is_token_flagged(&self.token).await {
+                Err(e) => {
+                    error!("checking if token is flagged: {:?}", e);
+                    continue;
+                }
+                Ok(true) => {
+                    warn!(
+                        "token: '{}' is currently flagged. skipping data gathering",
+                        &self.token
+                    );
+                    continue;
+                }
+                Ok(false) => {}
+            }
+
             debug!("Querying gha runner's status at: {}", url);
-            let req = client
-                .request(Method::GET, &url)
-                .header(
-                    USER_AGENT,
-                    "https://github.com/rust-lang/monitorbot (infra@rust-lang.org)",
-                )
-                .header(AUTHORIZATION, format!("{} {}", "token", self.token))
-                .header(ACCEPT, "application/vnd.github.v3+json")
-                .build()?;
+            let resp = http::get(&self.token, &url)
+                .send()
+                .await?
+                .json::<ApiResponse>()
+                .await?;
 
-            let resp = client.execute(req).await?.json::<ApiResponse>().await?;
-
-            //debug!("ApiResponse: {:#?}", resp);
+            debug!("ApiResponse: {:#?}", resp);
 
             // convert to metrics
             for runner in resp.runners.iter() {
