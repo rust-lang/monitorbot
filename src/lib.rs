@@ -1,6 +1,7 @@
 #![allow(clippy::new_without_default)]
 
 pub mod collectors;
+pub(crate) mod http;
 mod config;
 
 pub use config::Config;
@@ -25,7 +26,8 @@ pub struct MetricProvider {
 
 impl MetricProvider {
     pub fn new(config: Config) -> Self {
-        let register = Registry::new_custom(None, None).expect("Unable to build Registry");
+        let register = Registry::new_custom(Some("monitorbot".to_string()), None)
+            .expect("Unable to build Registry");
         Self { register, config }
     }
 

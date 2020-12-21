@@ -14,6 +14,14 @@ pub struct Config {
     pub gh_rate_limit_tokens: String,
     // github rate limit stats data cache refresh rate frequency (in seconds)
     pub gh_rate_limit_stats_cache_refresh: u64,
+    // github api token to be used when querying for gha runner's status
+    // note: token must have (repo scope) authorization
+    pub rust_runners_token: String,
+    // gh runner's repos to track they status. multiple repos are allowed
+    // ex. "rust,cargo,docs.rs"
+    pub gha_runners_repos: String,
+    // gha runner's status refresh rate frequency (in seconds)
+    pub gha_runners_cache_refresh: u64,
 }
 
 impl Config {
@@ -23,6 +31,9 @@ impl Config {
             port: default_env("PORT", 3001)?,
             gh_rate_limit_tokens: require_env("RATE_LIMIT_TOKENS")?,
             gh_rate_limit_stats_cache_refresh: default_env("GH_RATE_LIMIT_STATS_REFRESH", 120)?,
+            rust_runners_token: require_env("RUST_ORG_TOKEN")?,
+            gha_runners_repos: require_env("RUNNERS_REPOS")?,
+            gha_runners_cache_refresh: default_env("GHA_RUNNERS_REFRESH", 120)?,
         })
     }
 }
