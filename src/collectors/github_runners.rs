@@ -69,7 +69,7 @@ impl GithubRunners {
                 Vec::new(),
                 HashMap::new(),
             )
-                .unwrap(),
+            .unwrap(),
         };
 
         let refresh_rate = config.gha_runners_cache_refresh;
@@ -131,7 +131,7 @@ impl GithubRunners {
                         .const_label("repo", label_repo.clone())
                         .const_label("runner", label_runner.clone()),
                 )
-                    .unwrap();
+                .unwrap();
 
                 online.set(if status == "online" { 1 } else { 0 });
                 gauges.push(online);
@@ -143,7 +143,7 @@ impl GithubRunners {
                         .const_label("repo", label_repo)
                         .const_label("runner", label_runner),
                 )
-                    .unwrap();
+                .unwrap();
 
                 busy.set(value_busy);
                 gauges.push(busy);

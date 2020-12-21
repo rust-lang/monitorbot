@@ -1,8 +1,8 @@
 #![allow(clippy::new_without_default)]
 
 pub mod collectors;
-pub(crate) mod http;
 mod config;
+pub(crate) mod http;
 
 pub use config::Config;
 
