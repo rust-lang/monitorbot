@@ -6,16 +6,8 @@ use log::{debug, error};
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use reqwest::{Client, Method, Request};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tokio::time::Duration;
-
-#[derive(Clone)]
-struct User {
-    token: String,
-    name: String,
-    limit: IntGauge,
-    remaining: IntGauge,
-    reset: IntGauge,
-}
 
 const GH_API_USER_ENDPOINT: &str = "https://api.github.com/user";
 const GH_API_RATE_LIMIT_ENDPOINT: &str = "https://api.github.com/rate_limit";
@@ -78,51 +70,15 @@ impl GitHubRateLimit {
     }
 
     async fn get_users_for_tokens(tokens: Vec<String>) -> Result<Vec<User>, Error> {
-        let ns = String::from("monitorbot_github_rate_limit");
-        let mut rv: Vec<User> = Vec::new();
-        for token in tokens.into_iter() {
-            let ns2 = ns.clone();
-            let username = GitHubRateLimit::get_github_api_username(&token).await?;
-            let user_future = tokio::task::spawn_blocking(move || {
-                let rate_limit = IntGauge::with_opts(
-                    Opts::new("limit", "Rate limit.")
-                        .namespace(ns2.clone())
-                        .const_label("username", username.clone()),
-                )
-                .unwrap();
-
-                let rate_remaining = IntGauge::with_opts(
-                    Opts::new("remaining", "Rate remaining.")
-                        .namespace(ns2.clone())
-                        .const_label("username", username.clone()),
-                )
-                .unwrap();
-
-                let rate_reset = IntGauge::with_opts(
-                    Opts::new("reset", "Rate reset.")
-                        .namespace(ns2.clone())
-                        .const_label("username", username.clone()),
-                )
-                .unwrap();
-
-                User {
-                    token: token.to_owned(),
-                    name: username,
-                    limit: rate_limit,
-                    remaining: rate_remaining,
-                    reset: rate_reset,
-                }
+        let mut result = Vec::new();
+        for token in &tokens {
+            result.push(User {
+                token: token.to_owned(),
+                name: GitHubRateLimit::get_github_api_username(&token).await?,
+                products: Arc::new(Mutex::new(HashMap::new())),
             });
-
-            let user = match user_future.await {
-                Ok(u) => u,
-                _ => panic!("We need to decide if we wanna panic or keep going"),
-            };
-
-            rv.push(user);
         }
-
-        Ok(rv)
+        Ok(result)
     }
 
     async fn get_github_api_username(token: &str) -> Result<String, Error> {
@@ -133,23 +89,36 @@ impl GitHubRateLimit {
 
         let client = reqwest::Client::new();
         let req = GithubReqBuilder::User.build_request(&client, &token)?;
-        let u = client.execute(req).await?.json::<GithubUser>().await?;
+
+        let u = client
+            .execute(req)
+            .await?
+            .error_for_status()?
+            .json::<GithubUser>()
+            .await?;
 
         Ok(u.login)
     }
 
     async fn update_stats(&mut self) -> Result<(), Error> {
-        debug!("Updating rate limit stats");
-
         #[derive(Debug, serde::Deserialize)]
-        struct GithubRateLimit {
-            pub rate: HashMap<String, usize>,
+        struct ResponseBody {
+            resources: HashMap<String, ResponseResource>,
         }
 
+        #[derive(Debug, serde::Deserialize)]
+        struct ResponseResource {
+            limit: i64,
+            remaining: i64,
+            reset: i64,
+        }
+
+        debug!("Updating rate limit stats");
+
         let client = reqwest::Client::new();
-        for u in self.users.iter_mut() {
+        for user in self.users.iter_mut() {
             let req = GithubReqBuilder::RateLimit
-                .build_request(&client, &u.token)
+                .build_request(&client, &user.token)
                 .context("Unable to build request to update stats")?;
 
             let response = client
@@ -157,18 +126,21 @@ impl GitHubRateLimit {
                 .await
                 .context("Unable to execute request to update stats")?;
 
-            let mut data = response
-                .json::<GithubRateLimit>()
+            let data: ResponseBody = response
+                .json()
                 .await
                 .context("Unable to deserialize rate limit stats")?;
 
-            let remaining = data.rate.remove("remaining").unwrap_or(0);
-            let limit = data.rate.remove("limit").unwrap_or(0);
-            let reset = data.rate.remove("reset").unwrap_or(0);
+            let mut user_products = user.products.lock().unwrap();
+            for (product_name, resource) in data.resources.iter() {
+                let product = user_products
+                    .entry(product_name.to_string())
+                    .or_insert_with(|| ProductMetrics::new(&user.name, &product_name));
 
-            u.remaining.set(remaining as i64);
-            u.reset.set(reset as i64);
-            u.limit.set(limit as i64);
+                product.limit.set(resource.limit);
+                product.remaining.set(resource.remaining);
+                product.reset.set(resource.reset);
+            }
         }
 
         Ok(())
@@ -182,14 +154,46 @@ impl Collector for GitHubRateLimit {
     }
 
     fn collect(&self) -> std::vec::Vec<prometheus::proto::MetricFamily> {
-        // collect MetricFamilys.
-        let mut mfs = Vec::new();
+        let mut metrics = Vec::new();
         for user in self.users.iter() {
-            mfs.extend(user.limit.collect());
-            mfs.extend(user.remaining.collect());
-            mfs.extend(user.reset.collect());
+            for product in user.products.lock().unwrap().values() {
+                metrics.extend(product.limit.collect());
+                metrics.extend(product.remaining.collect());
+                metrics.extend(product.reset.collect());
+            }
         }
+        metrics
+    }
+}
 
-        mfs
+#[derive(Clone)]
+struct User {
+    token: String,
+    name: String,
+    products: Arc<Mutex<HashMap<String, ProductMetrics>>>,
+}
+
+struct ProductMetrics {
+    limit: IntGauge,
+    remaining: IntGauge,
+    reset: IntGauge,
+}
+
+impl ProductMetrics {
+    fn new(user: &str, product: &str) -> Self {
+        let gauge = |name, help| -> IntGauge {
+            IntGauge::with_opts(
+                Opts::new(name, help)
+                    .namespace("monitorbot_github_rate_limit")
+                    .const_label("username", user)
+                    .const_label("product", product),
+            )
+            .unwrap()
+        };
+        Self {
+            limit: gauge("limit", "GitHub API total rate limit"),
+            remaining: gauge("remaining", "GitHub API remaining rate limit"),
+            reset: gauge("reset", "GitHub API rate limit reset time"),
+        }
     }
 }

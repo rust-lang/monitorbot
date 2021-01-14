@@ -1,4 +1,4 @@
-use anyhow::{bail, Error, Result};
+use anyhow::{Context, Error};
 use hyper::Server;
 use log::info;
 use monitorbot::Config;
@@ -15,16 +15,14 @@ async fn main() -> Result<(), Error> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
     let provider = MetricProvider::new(config);
-    if let Err(e) = register_collectors(&provider).await {
-        bail!("(Registering collectors) {}", e)
-    }
+    register_collectors(&provider)
+        .await
+        .context("Failed to register collectors")?;
 
     let server = Server::bind(&addr).serve(provider.into_service());
     info!("Server listening on port: {}", port);
 
-    if let Err(e) = server.await {
-        bail!("(Hyper server error) {}", e);
-    }
+    server.await.context("Failed to run Hyper server")?;
 
     Ok(())
 }
