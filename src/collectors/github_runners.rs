@@ -1,9 +1,11 @@
-use crate::{http, http::is_token_flagged, Config};
+use crate::{http, Config};
 use anyhow::Error;
 use log::{debug, error, warn};
-use prometheus::core::Desc;
+use prometheus::core::AtomicI64;
+use prometheus::core::{Desc, GenericGauge};
 use prometheus::proto::MetricFamily;
 use prometheus::{core::Collector, IntGauge, Opts};
+use reqwest::header::LINK;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::time::Duration;
@@ -23,15 +25,6 @@ struct Runner {
     os: String,
     status: String,
     busy: bool,
-    labels: Vec<Label>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct Label {
-    id: usize,
-    name: String,
-    #[serde(rename = "type")]
-    the_type: String,
 }
 
 #[derive(Clone)]
@@ -40,8 +33,6 @@ pub struct GithubRunners {
     token: String,
     // repos to track gha runners
     repos: Vec<String>,
-    // metric namespace
-    ns: String,
     // actual metrics
     metrics: Arc<RwLock<Vec<IntGauge>>>,
     // default metric description
@@ -57,15 +48,13 @@ impl GithubRunners {
             .map(|v| v.trim().to_string())
             .collect();
 
-        let ns = String::from("gha_runner");
         let rv = Self {
             token,
             repos,
-            ns: ns.clone(),
             metrics: Arc::new(RwLock::new(Vec::new())),
             desc: Desc::new(
-                ns,
-                "GHA runner's status".to_string(),
+                String::from("gha_runner"),
+                String::from("GHA runner's status"),
                 Vec::new(),
                 HashMap::new(),
             )
@@ -90,63 +79,47 @@ impl GithubRunners {
     async fn update_stats(&mut self) -> Result<(), Error> {
         let mut gauges = Vec::new();
         for repo in self.repos.iter() {
-            let url = String::from(GH_RUNNERS_ENDPOINT).replace("{owner_repo}", repo);
+            let mut url: Option<String> = String::from(GH_RUNNERS_ENDPOINT)
+                .replace("{owner_repo}", repo)
+                .into();
 
-            // does this token still able to query github api? (rate limit wise)
-            match is_token_flagged(&self.token).await {
-                Err(e) => {
-                    error!("checking if token is flagged: {:?}", e);
-                    continue;
-                }
-                Ok(true) => {
-                    warn!(
-                        "token: '{}' is currently flagged. skipping data gathering",
-                        &self.token
+            while url.is_some() {
+                let response = http::get(&self.token, &url.unwrap()).send().await?;
+                url = match response.headers().get(LINK) {
+                    Some(data) => {
+                        //TODO: parse Link header for rel=next
+                        warn!("{:#?}", data);
+                        None
+                    }
+                    _ => None,
+                };
+
+                let resp = response.json::<ApiResponse>().await?;
+                debug!("{:#?}", resp);
+
+                for runner in resp.runners.iter() {
+                    let online = metric_factory(
+                        "online",
+                        "runner is online",
+                        &self.desc.fq_name,
+                        &repo,
+                        &runner.name,
                     );
-                    continue;
+
+                    online.set(if runner.status == "online" { 1 } else { 0 });
+                    gauges.push(online);
+
+                    // busy
+                    let busy = metric_factory(
+                        "busy",
+                        "runner is busy",
+                        &self.desc.fq_name,
+                        &repo,
+                        &runner.name,
+                    );
+                    busy.set(if runner.busy { 1 } else { 0 });
+                    gauges.push(busy);
                 }
-                Ok(false) => {}
-            }
-
-            debug!("Querying gha runner's status at: {}", url);
-            let resp = http::get(&self.token, &url)
-                .send()
-                .await?
-                .json::<ApiResponse>()
-                .await?;
-
-            debug!("ApiResponse: {:#?}", resp);
-
-            // convert to metrics
-            for runner in resp.runners.iter() {
-                let status = &runner.status.clone();
-                let value_busy = if runner.busy { 1 } else { 0 };
-                let label_repo = repo.clone();
-                let label_runner = runner.name.clone();
-
-                // online
-                let online = IntGauge::with_opts(
-                    Opts::new("online", "runner is online.")
-                        .namespace(self.ns.clone())
-                        .const_label("repo", label_repo.clone())
-                        .const_label("runner", label_runner.clone()),
-                )
-                .unwrap();
-
-                online.set(if status == "online" { 1 } else { 0 });
-                gauges.push(online);
-
-                // busy
-                let busy = IntGauge::with_opts(
-                    Opts::new("busy", "runner is busy.")
-                        .namespace(self.ns.clone())
-                        .const_label("repo", label_repo)
-                        .const_label("runner", label_runner),
-                )
-                .unwrap();
-
-                busy.set(value_busy);
-                gauges.push(busy);
             }
         }
 
@@ -167,7 +140,7 @@ impl Collector for GithubRunners {
         self.metrics.read().map_or_else(
             |e| {
                 error!("Unable to collect: {:#?}", e);
-                Vec::new()
+                Vec::with_capacity(0)
             },
             |guard| {
                 guard.iter().fold(Vec::new(), |mut acc, item| {
@@ -177,4 +150,20 @@ impl Collector for GithubRunners {
             },
         )
     }
+}
+
+fn metric_factory<S: Into<String>>(
+    name: S,
+    help: S,
+    ns: S,
+    repo: S,
+    runner: S,
+) -> GenericGauge<AtomicI64> {
+    IntGauge::with_opts(
+        Opts::new(name, help)
+            .namespace(ns)
+            .const_label("repo", repo)
+            .const_label("runner", runner),
+    )
+    .unwrap()
 }

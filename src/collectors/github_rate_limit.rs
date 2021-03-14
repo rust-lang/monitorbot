@@ -184,7 +184,7 @@ impl ProductMetrics {
         let gauge = |name, help| -> IntGauge {
             IntGauge::with_opts(
                 Opts::new(name, help)
-                    .namespace("monitorbot_github_rate_limit")
+                    .namespace("github_rate_limit")
                     .const_label("username", user)
                     .const_label("product", product),
             )
