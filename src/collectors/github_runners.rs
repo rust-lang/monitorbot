@@ -41,7 +41,7 @@ pub struct GithubRunners {
 
 impl GithubRunners {
     pub async fn new(config: &Config) -> Result<Self, Error> {
-        let token = config.rust_runners_token.to_string();
+        let token = config.github_token.to_string();
         let repos: Vec<String> = config
             .gha_runners_repos
             .split(',')
