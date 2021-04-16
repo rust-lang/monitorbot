@@ -18,3 +18,4 @@ futures = "0.3"
 anyhow = "1.0"
 log = "0.4"
 env_logger = { version = "0.8", features = ["termcolor", "humantime"] }
+parse_link_header = "0.2"

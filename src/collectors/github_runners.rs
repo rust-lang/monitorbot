@@ -1,16 +1,18 @@
 use crate::{http, Config};
-use anyhow::Error;
+use anyhow::{bail, Result};
 use log::{debug, error, warn};
 use prometheus::core::AtomicI64;
 use prometheus::core::{Desc, GenericGauge};
 use prometheus::proto::MetricFamily;
 use prometheus::{core::Collector, IntGauge, Opts};
-use reqwest::header::LINK;
+use reqwest::header::{HeaderValue, LINK};
+use reqwest::{Response, StatusCode};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::time::Duration;
 
-const GH_RUNNERS_ENDPOINT: &str = "https://api.github.com/repos/{owner_repo}/actions/runners";
+const GH_RUNNERS_ENDPOINT: &str =
+    "https://api.github.com/repos/{owner_repo}/actions/runners?per_page=100";
 
 #[derive(Debug, serde::Deserialize)]
 struct ApiResponse {
@@ -40,7 +42,7 @@ pub struct GithubRunners {
 }
 
 impl GithubRunners {
-    pub async fn new(config: &Config) -> Result<Self, Error> {
+    pub async fn new(config: &Config) -> Result<Self> {
         let token = config.github_token.to_string();
         let repos: Vec<String> = config
             .gha_runners_repos
@@ -76,8 +78,8 @@ impl GithubRunners {
         Ok(rv)
     }
 
-    async fn update_stats(&mut self) -> Result<(), Error> {
-        let mut gauges = Vec::new();
+    async fn update_stats(&mut self) -> Result<()> {
+        let mut gauges = Vec::with_capacity(self.repos.len() * 2);
         for repo in self.repos.iter() {
             let mut url: Option<String> = String::from(GH_RUNNERS_ENDPOINT)
                 .replace("{owner_repo}", repo)
@@ -85,15 +87,15 @@ impl GithubRunners {
 
             while url.is_some() {
                 let response = http::get(&self.token, &url.unwrap()).send().await?;
-                url = match response.headers().get(LINK) {
-                    Some(data) => {
-                        //TODO: parse Link header for rel=next
-                        warn!("{:#?}", data);
-                        None
-                    }
-                    _ => None,
-                };
+                debug!(
+                    "http response status ({:#?}) and headers: {:#?}",
+                    response.status(),
+                    response.headers()
+                );
 
+                guard_rate_limited(&response)?;
+
+                url = next_uri(response.headers().get(LINK));
                 let resp = response.json::<ApiResponse>().await?;
                 debug!("{:#?}", resp);
 
@@ -105,11 +107,9 @@ impl GithubRunners {
                         &repo,
                         &runner.name,
                     );
-
                     online.set(if runner.status == "online" { 1 } else { 0 });
                     gauges.push(online);
 
-                    // busy
                     let busy = metric_factory(
                         "busy",
                         "runner is busy",
@@ -150,6 +150,40 @@ impl Collector for GithubRunners {
             },
         )
     }
+}
+
+fn guard_rate_limited(response: &Response) -> Result<()> {
+    if response.status() == StatusCode::FORBIDDEN {
+        warn!("403 FORBIDDEN response status");
+
+        let rate_limited = match response.headers().get("x-ratelimit-remaining") {
+            Some(rl) => rl.to_str()?.parse::<usize>()? == 0,
+            None => unreachable!(),
+        };
+
+        if rate_limited {
+            bail!("We've hit the rate limit");
+        }
+    }
+
+    Ok(())
+}
+
+fn next_uri(header: Option<&HeaderValue>) -> Option<String> {
+    if let Some(header) = header {
+        return match header.to_str() {
+            Ok(header_str) => match parse_link_header::parse(header_str) {
+                Ok(links) => match links.get(&Some("next".to_string())) {
+                    Some(link) => Some(link.uri.to_string()),
+                    None => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+    }
+
+    None
 }
 
 fn metric_factory<S: Into<String>>(
