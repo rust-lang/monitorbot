@@ -1,4 +1,5 @@
-use crate::{http, Config};
+use super::default_headers;
+use crate::Config;
 use anyhow::{bail, Result};
 use log::{debug, error, warn};
 use prometheus::core::AtomicI64;
@@ -6,7 +7,7 @@ use prometheus::core::{Desc, GenericGauge};
 use prometheus::proto::MetricFamily;
 use prometheus::{core::Collector, IntGauge, Opts};
 use reqwest::header::{HeaderValue, LINK};
-use reqwest::{Response, StatusCode};
+use reqwest::{Client, Response, StatusCode};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::time::Duration;
@@ -39,10 +40,11 @@ pub struct GithubRunners {
     metrics: Arc<RwLock<Vec<IntGauge>>>,
     // default metric description
     desc: Desc,
+    http: Client,
 }
 
 impl GithubRunners {
-    pub async fn new(config: &Config) -> Result<Self> {
+    pub async fn new(config: &Config, http: Client) -> Result<Self> {
         let token = config.github_token.to_string();
         let repos: Vec<String> = config
             .gha_runners_repos
@@ -53,6 +55,7 @@ impl GithubRunners {
         let rv = Self {
             token,
             repos,
+            http,
             metrics: Arc::new(RwLock::new(Vec::new())),
             desc: Desc::new(
                 String::from("gha_runner"),
@@ -85,19 +88,20 @@ impl GithubRunners {
                 .replace("{owner_repo}", repo)
                 .into();
 
+            debug!("Updating runner's stats");
+
             while url.is_some() {
-                let response = http::get(&self.token, &url.unwrap()).send().await?;
-                debug!(
-                    "http response status ({:#?}) and headers: {:#?}",
-                    response.status(),
-                    response.headers()
-                );
+                let response = self
+                    .http
+                    .get(&url.unwrap())
+                    .headers(default_headers(&self.token))
+                    .send()
+                    .await?;
 
                 guard_rate_limited(&response)?;
 
                 url = next_uri(response.headers().get(LINK));
                 let resp = response.json::<ApiResponse>().await?;
-                debug!("{:#?}", resp);
 
                 for runner in resp.runners.iter() {
                     let online = metric_factory(

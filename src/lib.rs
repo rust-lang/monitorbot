@@ -2,7 +2,6 @@
 
 pub mod collectors;
 mod config;
-pub(crate) mod http;
 
 pub use config::Config;
 
