@@ -1,13 +1,13 @@
 use super::default_headers;
 use crate::Config;
-use anyhow::{bail, Result};
-use log::{debug, error, warn};
+use anyhow::{Context, Result};
+use log::{debug, error};
 use prometheus::core::AtomicI64;
 use prometheus::core::{Desc, GenericGauge};
 use prometheus::proto::MetricFamily;
 use prometheus::{core::Collector, IntGauge, Opts};
 use reqwest::header::{HeaderValue, LINK};
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{Client, Response};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::time::Duration;
@@ -90,17 +90,18 @@ impl GithubRunners {
 
             debug!("Updating runner's stats");
 
-            while url.is_some() {
+            while let Some(endpoint) = url.take() {
                 let response = self
                     .http
-                    .get(&url.unwrap())
+                    .get(&endpoint)
                     .headers(default_headers(&self.token))
                     .send()
                     .await?;
 
-                guard_rate_limited(&response)?;
+                url = guard_rate_limited(&response)?
+                    .error_for_status_ref()
+                    .map(|res| next_uri(res.headers().get(LINK)))?;
 
-                url = next_uri(response.headers().get(LINK));
                 let resp = response.json::<ApiResponse>().await?;
 
                 for runner in resp.runners.iter() {
@@ -156,21 +157,19 @@ impl Collector for GithubRunners {
     }
 }
 
-fn guard_rate_limited(response: &Response) -> Result<()> {
-    if response.status() == StatusCode::FORBIDDEN {
-        warn!("403 FORBIDDEN response status");
+fn guard_rate_limited(response: &Response) -> Result<&Response> {
+    let rate_limited = match response.headers().get("x-ratelimit-remaining") {
+        Some(rl) => rl.to_str()?.parse::<usize>()? == 0,
+        None => unreachable!(),
+    };
 
-        let rate_limited = match response.headers().get("x-ratelimit-remaining") {
-            Some(rl) => rl.to_str()?.parse::<usize>()? == 0,
-            None => unreachable!(),
-        };
-
-        if rate_limited {
-            bail!("We've hit the rate limit");
-        }
+    if rate_limited {
+        return response
+            .error_for_status_ref()
+            .context("We've hit the rate limit");
     }
 
-    Ok(())
+    Ok(response)
 }
 
 fn next_uri(header: Option<&HeaderValue>) -> Option<String> {

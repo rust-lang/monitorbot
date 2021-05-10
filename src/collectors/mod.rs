@@ -8,12 +8,15 @@ use crate::MetricProvider;
 use anyhow::{Error, Result};
 use futures::TryFutureExt;
 use log::info;
-use reqwest::header::{HeaderMap, ACCEPT, AUTHORIZATION, USER_AGENT};
-use reqwest::Client;
+use reqwest::header::{HeaderMap, ACCEPT, AUTHORIZATION};
+use reqwest::ClientBuilder;
 
 // register collectors for metrics gathering
 pub async fn register_collectors(p: &MetricProvider) -> Result<(), Error> {
-    let http = Client::new();
+    let http = ClientBuilder::new()
+        .user_agent("https://github.com/rust-lang/monitorbot (infra@rust-lang.org)")
+        .build()?;
+
     GitHubRateLimit::new(&p.config)
         .and_then(|rl| async {
             info!("Registering GitHubRateLimit collector");
@@ -31,12 +34,6 @@ pub async fn register_collectors(p: &MetricProvider) -> Result<(), Error> {
 
 fn default_headers(token: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    headers.insert(
-        USER_AGENT,
-        "https://github.com/rust-lang/monitorbot (infra@rust-lang.org)"
-            .parse()
-            .unwrap(),
-    );
     headers.insert(
         AUTHORIZATION,
         format!("{} {}", "token", token).parse().unwrap(),
