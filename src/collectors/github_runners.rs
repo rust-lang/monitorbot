@@ -176,10 +176,9 @@ fn next_uri(header: Option<&HeaderValue>) -> Option<String> {
     if let Some(header) = header {
         return match header.to_str() {
             Ok(header_str) => match parse_link_header::parse(header_str) {
-                Ok(links) => match links.get(&Some("next".to_string())) {
-                    Some(link) => Some(link.uri.to_string()),
-                    None => None,
-                },
+                Ok(links) => links
+                    .get(&Some("next".to_string()))
+                    .map(|next| next.uri.to_string()),
                 _ => None,
             },
             _ => None,
