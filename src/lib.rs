@@ -25,7 +25,8 @@ pub struct MetricProvider {
 
 impl MetricProvider {
     pub fn new(config: Config) -> Self {
-        let register = Registry::new_custom(None, None).expect("Unable to build Registry");
+        let register = Registry::new_custom(Some("monitorbot".to_string()), None)
+            .expect("Unable to build Registry");
         Self { register, config }
     }
 
