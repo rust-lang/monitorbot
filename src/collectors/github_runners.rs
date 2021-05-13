@@ -1,13 +1,13 @@
-use super::default_headers;
+use super::{default_headers, guard_rate_limited};
 use crate::Config;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use log::{debug, error};
 use prometheus::core::AtomicI64;
 use prometheus::core::{Desc, GenericGauge};
 use prometheus::proto::MetricFamily;
 use prometheus::{core::Collector, IntGauge, Opts};
 use reqwest::header::{HeaderValue, LINK};
-use reqwest::{Client, Response};
+use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::time::Duration;
@@ -155,21 +155,6 @@ impl Collector for GithubRunners {
             },
         )
     }
-}
-
-fn guard_rate_limited(response: &Response) -> Result<&Response> {
-    let rate_limited = match response.headers().get("x-ratelimit-remaining") {
-        Some(rl) => rl.to_str()?.parse::<usize>()? == 0,
-        None => unreachable!(),
-    };
-
-    if rate_limited {
-        return response
-            .error_for_status_ref()
-            .context("We've hit the rate limit");
-    }
-
-    Ok(response)
 }
 
 fn next_uri(header: Option<&HeaderValue>) -> Option<String> {
