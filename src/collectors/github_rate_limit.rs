@@ -1,10 +1,12 @@
 use prometheus::{core::Collector, IntGauge, Opts};
 
+use crate::collectors::{default_headers, guard_rate_limited};
 use crate::Config;
 use anyhow::{Context, Error, Result};
 use log::{debug, error};
-use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
-use reqwest::{Client, Method, Request};
+use prometheus::core::Desc;
+use prometheus::proto::MetricFamily;
+use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::time::Duration;
@@ -12,47 +14,36 @@ use tokio::time::Duration;
 const GH_API_USER_ENDPOINT: &str = "https://api.github.com/user";
 const GH_API_RATE_LIMIT_ENDPOINT: &str = "https://api.github.com/rate_limit";
 
-enum GithubReqBuilder {
-    User,
-    RateLimit,
-}
-
-impl GithubReqBuilder {
-    fn build_request(&self, client: &Client, token: &str) -> Result<Request, Error> {
-        let rb = match self {
-            Self::User => client.request(Method::GET, GH_API_USER_ENDPOINT),
-            Self::RateLimit => client.request(Method::GET, GH_API_RATE_LIMIT_ENDPOINT),
-        };
-
-        rb.header(
-            USER_AGENT,
-            "https://github.com/rust-lang/monitorbot (infra@rust-lang.org)",
-        )
-        .header(AUTHORIZATION, format!("{} {}", "token", token))
-        .header(ACCEPT, "application/vnd.github.v3+json")
-        .build()
-        .map_err(Error::from)
-    }
-}
-
 #[derive(Clone)]
 pub struct GitHubRateLimit {
     users: Vec<User>,
+    desc: Desc,
+    http: Client,
 }
 
 impl GitHubRateLimit {
-    pub async fn new(config: &Config) -> Result<Self, Error> {
+    pub async fn new(config: &Config, http: Client) -> Result<Self, Error> {
         let tokens: Vec<String> = config
             .gh_rate_limit_tokens
             .split(',')
             .map(|v| v.trim().to_string())
             .collect();
 
-        let users = Self::get_users_for_tokens(tokens)
+        let users = get_users_for_tokens(&http, tokens)
             .await
             .context("Unable to get usernames for rate limit stats")?;
 
-        let rv = Self { users };
+        let rv = Self {
+            users,
+            http,
+            desc: Desc::new(
+                String::from("gh_rate_limit"),
+                String::from("GH rate limit"),
+                Vec::new(),
+                HashMap::new(),
+            )
+            .unwrap(),
+        };
 
         let refresh_rate = config.gh_rate_limit_stats_cache_refresh;
         let mut rv2 = rv.clone();
@@ -67,37 +58,6 @@ impl GitHubRateLimit {
         });
 
         Ok(rv)
-    }
-
-    async fn get_users_for_tokens(tokens: Vec<String>) -> Result<Vec<User>, Error> {
-        let mut result = Vec::new();
-        for token in &tokens {
-            result.push(User {
-                token: token.to_owned(),
-                name: GitHubRateLimit::get_github_api_username(&token).await?,
-                products: Arc::new(Mutex::new(HashMap::new())),
-            });
-        }
-        Ok(result)
-    }
-
-    async fn get_github_api_username(token: &str) -> Result<String, Error> {
-        #[derive(serde::Deserialize)]
-        struct GithubUser {
-            pub login: String,
-        }
-
-        let client = reqwest::Client::new();
-        let req = GithubReqBuilder::User.build_request(&client, &token)?;
-
-        let u = client
-            .execute(req)
-            .await?
-            .error_for_status()?
-            .json::<GithubUser>()
-            .await?;
-
-        Ok(u.login)
     }
 
     async fn update_stats(&mut self) -> Result<(), Error> {
@@ -115,18 +75,14 @@ impl GitHubRateLimit {
 
         debug!("Updating rate limit stats");
 
-        let client = reqwest::Client::new();
         for user in self.users.iter_mut() {
-            let req = GithubReqBuilder::RateLimit
-                .build_request(&client, &user.token)
-                .context("Unable to build request to update stats")?;
-
-            let response = client
-                .execute(req)
+            let data: ResponseBody = self
+                .http
+                .get(GH_API_RATE_LIMIT_ENDPOINT)
+                .headers(default_headers(&user.token))
+                .send()
                 .await
-                .context("Unable to execute request to update stats")?;
-
-            let data: ResponseBody = response
+                .context("Unable to execute request to update stats")?
                 .json()
                 .await
                 .context("Unable to deserialize rate limit stats")?;
@@ -148,12 +104,11 @@ impl GitHubRateLimit {
 }
 
 impl Collector for GitHubRateLimit {
-    fn desc(&self) -> std::vec::Vec<&prometheus::core::Desc> {
-        // descriptions are being defined in the initialization of the metrics options
-        Vec::default()
+    fn desc(&self) -> Vec<&Desc> {
+        vec![&self.desc]
     }
 
-    fn collect(&self) -> std::vec::Vec<prometheus::proto::MetricFamily> {
+    fn collect(&self) -> Vec<MetricFamily> {
         let mut metrics = Vec::new();
         for user in self.users.iter() {
             for product in user.products.lock().unwrap().values() {
@@ -164,6 +119,38 @@ impl Collector for GitHubRateLimit {
         }
         metrics
     }
+}
+
+async fn get_users_for_tokens(client: &Client, tokens: Vec<String>) -> Result<Vec<User>, Error> {
+    #[derive(serde::Deserialize)]
+    struct GithubUser {
+        login: String,
+    }
+
+    let mut result = Vec::with_capacity(tokens.len());
+    for token in &tokens {
+        let response = client
+            .get(GH_API_USER_ENDPOINT)
+            .headers(default_headers(token))
+            .send()
+            .await?;
+
+        guard_rate_limited(&response)?;
+
+        let name = response
+            .error_for_status()?
+            .json::<GithubUser>()
+            .await
+            .map(|u| u.login)?;
+
+        result.push(User {
+            token: token.to_owned(),
+            name,
+            products: Arc::new(Mutex::new(HashMap::new())),
+        });
+    }
+
+    Ok(result)
 }
 
 #[derive(Clone)]
