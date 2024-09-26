@@ -7,7 +7,7 @@ RUN cargo build --release
 
 # Output image
 
-FROM ubuntu:focal as binary
+FROM ubuntu:24.04 as binary
 
 RUN apt-get update && apt-get install -y ca-certificates
 COPY --from=build /target/release/monitorbot /usr/local/bin/
