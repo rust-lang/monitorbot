@@ -74,7 +74,7 @@ impl GitHubRateLimit {
         for token in &tokens {
             result.push(User {
                 token: token.to_owned(),
-                name: GitHubRateLimit::get_github_api_username(&token).await?,
+                name: GitHubRateLimit::get_github_api_username(token).await?,
                 products: Arc::new(Mutex::new(HashMap::new())),
             });
         }
@@ -88,7 +88,7 @@ impl GitHubRateLimit {
         }
 
         let client = reqwest::Client::new();
-        let req = GithubReqBuilder::User.build_request(&client, &token)?;
+        let req = GithubReqBuilder::User.build_request(&client, token)?;
 
         let u = client
             .execute(req)
@@ -135,7 +135,7 @@ impl GitHubRateLimit {
             for (product_name, resource) in data.resources.iter() {
                 let product = user_products
                     .entry(product_name.to_string())
-                    .or_insert_with(|| ProductMetrics::new(&user.name, &product_name));
+                    .or_insert_with(|| ProductMetrics::new(&user.name, product_name));
 
                 product.limit.set(resource.limit);
                 product.remaining.set(resource.remaining);

@@ -17,14 +17,17 @@ const GH_RUNNERS_ENDPOINT: &str =
 
 #[derive(Debug, serde::Deserialize)]
 struct ApiResponse {
+    #[expect(dead_code)]
     total_count: usize,
     runners: Vec<Runner>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct Runner {
+    #[expect(dead_code)]
     id: usize,
     name: String,
+    #[expect(dead_code)]
     os: String,
     status: String,
     busy: bool,
@@ -109,7 +112,7 @@ impl GithubRunners {
                         "online",
                         "runner is online",
                         &self.desc.fq_name,
-                        &repo,
+                        repo,
                         &runner.name,
                     );
                     online.set(if runner.status == "online" { 1 } else { 0 });
@@ -119,7 +122,7 @@ impl GithubRunners {
                         "busy",
                         "runner is busy",
                         &self.desc.fq_name,
-                        &repo,
+                        repo,
                         &runner.name,
                     );
                     busy.set(if runner.busy { 1 } else { 0 });
